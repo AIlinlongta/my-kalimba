@@ -1,0 +1,18 @@
+# Godot 编辑器缓存
+.godot/
+
+# 导出产物
+*.pck
+*.exe
+*.apk
+*.aab
+*.jks
+*.keystore
+*.idsig
+
+# 备份音频/MIDI（按需保留或忽略）
+*_bak/
+
+# 系统文件
+.DS_Store
+Thumbs.db

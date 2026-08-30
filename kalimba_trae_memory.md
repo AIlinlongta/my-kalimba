@@ -1,0 +1,57 @@
+## Hard Constraints
+- Audio files for different timbres must be stored in separate directories: kalimba in res://audio/kalimba/ and piano in res://audio/piano/
+- When switching timbres, the AUDIO_PATH constant must be updated to point to the corresponding directory
+- The timbre switch button must be placed to the left of the '切换标注' button
+- The timbre selection menu should only include '钢琴' (piano) and '拇指琴' (kalimba) options
+- When switching timbres,琴键触摸 must be temporarily disabled to prevent accidental input
+- Each key press must create a new AudioStreamPlayer instance to avoid state residual issues
+- A '返回基本模式' button must be added to the right of the '乐谱' button, hidden in basic mode and displayed in practice/demo mode
+- In basic mode, keys should be positioned near the top of the screen (approximately 10% from the top); in practice mode, keys should be positioned in the lower 2/3 of the screen to make space for the falling guide area
+- When entering practice/demo mode for the first time, falling bars must be displayed immediately without requiring a second entry
+- The small white squares on the judgment line must be removed, retaining only the judgment line itself
+- When exiting practice/demo mode, keys must immediately return to the top position and the falling guide area must be removed
+- The falling guide area should be structured as individual slots above each key rather than a single translucent overlay
+- Falling bars must be colored green for single notes and red for multiple simultaneous notes (≤50ms interval)
+- When a falling bar reaches the judgment line, the corresponding key must flash blue
+- App is locked to landscape via `window/handheld/orientation="landscape"` in project.godot [display] to reduce rotation-triggered resizes
+- During practice/demo resize, the judgment line must resync `position.y = _column_top() - 2.0` in `_reflow_practice_overlay` to prevent bar-landing misalignment
+- An '导入' button must be added to the right of the score button, hidden in practice mode
+- MIDI files imported must be saved to the application's private directory under the MIDI folder (user://midi/)
+- Imported MIDI files must have their titles displayed in the score list; if no title exists, fall back to the filename without the extension
+- Imported MIDI files must have a running marquee effect for long titles to ensure full visibility
+- Use Godot's `FileDialog` node with `use_native_dialog=true` for file selection on Android to ensure SAF (Storage Access Framework) compatibility
+- Filenames must be sanitized by replacing path separators (/, \) with underscores, discarding control characters, and using 'untitled' as a fallback for empty names
+- When MIDI file writing fails, display a toast with the specific filename and target directory for debugging
+-曲名截断规则：源 MIDI 曲名优先，无曲名时取 URI 最后一段短名；超过 40 字符时从后往前保留尾部 39 字符并在开头添加省略号（总长 40 字符）
+- The midi writing failure toast must include the specific曲名(base_name) and target directory to facilitate debugging on real devices (user://midi)
+
+## Engineering Conventions
+- Key height clamp pattern: `min(computed_h, avail - margin)` to avoid overflow; never mutate user's length factor to restore original lengths when returning to basic mode
+- Mode switch (basic↔practice) must reflow layout immediately via a helper called from both enter and exit
+- MIDI files are bundled in res://midi/ (read-only) and copied to user://midi/ (writable) on first launch via `_ensure_midi_dir()` without overwriting existing user files
+- `FileAccess.copy()` is replaced with `DirAccess.copy_absolute(src, dst)` for file copying
+- `Panel` (not `ColorRect`) is used for drawing rounded StyleBoxFlat/shadow as ColorRect won't render them
+- Overlay reflows must be guarded with `is_instance_valid()` + null checks to prevent errors with not-yet-created nodes
+- Sidebar open with empty list must allow close: in `_input`, if sidebar open and press lands outside `_sidebar.get_global_rect()`, call `_close_sidebar()` and return
+- MIDI writer must include the title as meta `0xFF 0x03` when saving adapted MIDI files
+- MIDI parser must read the title from the meta `0xFF 0x03` and return the first non-empty title (UTF-8)
+- MIDI parser note entries must carry a `channel` field; parse `status & 0x0F` from the event byte and key `open_notes` by `channel*256 + midi` so same-pitch notes on different channels don't collide
+- Auto chord-adding is DISABLED; `midi_adapter.adapt` no longer harmonizes isolated single notes
+- Main-melody detection: the channel with the most notes is treated as the melody; simultaneous notes are grouped by ≤50ms start window and capped at ≤3 (melody always kept, extras dropped by harmonic closeness)
+- Transposition strategy is density-weighted center (notes weighted by duration) + fold-min priority: choose the translate with fewest folded notes, then fewest black-key projections, then closest to weighted center; folding counts computed via difference-array prefix O(N+U) instead of brute-scanning each candidate
+- `MidiAdapter.adapt(events, with_chord)` returns a Dictionary `{events, translate, stats}` (NOT an Array); `stats` = `{folded, black, poly_cut}`. Callers must use `adapt(...)["events"]`
+- Log every dropped/modified note mid-loop: print `[midi_adapter]` lines for 折叠(move out of range), 黑键吸附(snap to natural), 复音裁剪(polyphony cut with exact counts)
+- After a successful MIDI import, show an AcceptDialog summary via a dedicated `_show_import_summary(...)` function listing original vs adapted note counts and the folded/black/poly_cut stats (or a "直接适配成功" message when all are zero); also print a `[导入统计]` one-line summary to console
+- Extract filenames from paths using `_extract_import_name(src_path)`, which handles both standard file paths and URI-encoded content paths by decoding and removing extensions
+- 曲名显示使用 `Label` 节点配合 `set_anchors_preset(PRESET_FULL_RECT)` 填满裁剪 `Control`（`clip_contents=true`），`text_overrun_behavior=OVERRUN_NO_TRIMMING`（省略号由数据层 `_keep_tail` 前置）；超宽时用 `_setup_score_marquees`/`_update_score_marquees` 跑马灯横向滚动，`clip.size.x` 为 0 时归位到 (0,0)。注意裸 `Control`(非 Container) 不会给子节点布局，Label 必须 FULL_RECT 否则尺寸为 0 显示空白
+
+## Lessons Learned
+- MIDI→thumb-piano conversion works well using `kalimba_converter` (Python) to parse text jianpu/MIDI into calibrated 17-key thumb-piano MIDI
+- Image→jianpu OCR on book-photo thumb-piano scores is unreliable (MusicalScoreRecognition and PaddleOCR both fail); prefer user-provided text notes
+- When reordering code-setup in a flow, build child nodes BEFORE touching their `.size/.position` to avoid 'assignment on base object of type Nil' runtime errors
+- Using koa-connect wrapper caused ctx leaks; native Koa rewrite is required instead of wrapping Express middleware
+- Directly using `FileAccess.open` with content URIs on Android may fail; using the native `FileDialog` with `use_native_dialog=true` is more reliable for SAF compatibility
+- Filenames containing path separators or special characters can cause write failures; sanitizing filenames before saving prevents such issues
+- On Android the system file dialog may return content URI paths; call `_extract_import_name`(decode URI, take last path segment) + `_sanitize_filename` to derive a clean曲名, then `_keep_tail` to truncate to ≤40 chars
+- Godot 4's `Label` built-in `OVERRUN_TRIM_ELLIPSIS` truncates from the tail (keeps head); to show a leading ellipsis + tail instead, do it at the data layer (`_keep_tail`) and use `OVERRUN_NO_TRIMMING` on the Label
+- A plain `Control` (not a Container subclass) does not auto-layout its children; a child Label stays size (0,0) and is invisible unless `set_anchors_preset(PRESET_FULL_RECT)` is applied
