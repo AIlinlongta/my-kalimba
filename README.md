@@ -55,3 +55,7 @@ my-kalimba/
 
 - 使用问题 / 建议：欢迎在仓库 **Issues** 中反馈
 - 评测反馈模板与发布、协作流程见 [docs/发布与评测指南.md](docs/发布与评测指南.md)
+
+## License
+
+本项目基于 **MIT License** 开源，详见 [LICENSE](LICENSE)。
