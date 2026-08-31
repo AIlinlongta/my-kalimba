@@ -89,7 +89,7 @@ const SIDEBAR_WIDTH_RATIO: float = 0.34     # 侧边栏占屏宽比例
 const SIDEBAR_COLOR: Color = Color(0.16, 0.16, 0.20)
 const SIDEBAR_HEAD_COLOR: Color = Color(0.22, 0.22, 0.27)
 
-# 练习指引区 / 下落槽（参考 c1.jpg 的「上槽下键、判定线带点」一体式布局）
+# 练习指引区 / 下落槽（「上槽下键、判定线带点」一体式布局）
 const GUIDE_HEIGHT_RATIO: float = 0.4    # 下落槽（=/琴键起始边界）占屏高比例
 const LAND_LINE_COLOR: Color = Color(1, 1, 1, 0.30)   # 判定线
 const SLOT_COLOR: Color = Color(0.055, 0.055, 0.085, 0.82)   # 每列下落槽底色
