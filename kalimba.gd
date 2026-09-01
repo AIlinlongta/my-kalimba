@@ -184,11 +184,22 @@ var _midi_note_map: Dictionary = {}  # midi音号 -> note名
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_setup_master_softlimit()
 	_preload_all_audio()
 	_build_audio_player_pool()
 	_build_midi_note_map()
 	_try_build_layout()
 	set_process(false)
+
+## 在 Master 总线加软限幅，防止相邻持续音（如小号）叠加时削波成刺耳噪声
+func _setup_master_softlimit() -> void:
+	var bus_idx: int = AudioServer.get_bus_index("Master")
+	if bus_idx < 0:
+		return
+	var limiter := AudioEffectLimiter.new()
+	limiter.ceiling_db = -1.0
+	limiter.soft_clip_db = -6.0
+	AudioServer.add_bus_effect(bus_idx, limiter, 0)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
@@ -1530,7 +1541,7 @@ func _mark_practice_notes() -> void:
 	var melody_ch := MidiAdapter.pick_melody_channel(_current_midi)
 	for ev in _current_midi:
 		var is_melody: bool = int(ev.get("channel", 0)) == melody_ch
-		_practice_note_keys.append([_midi_to_keynote(ev["midi"]), ev["midi"], ev["start"], is_melody])
+		_practice_note_keys.append([_midi_to_keynote(ev["midi"]), ev["midi"], ev["start"], is_melody, ev.get("dur", 0.5)])
 
 func _build_guide_area() -> void:
 	_guide_area = null  # 不再用整块半透明遮罩，改用每列下落槽
@@ -1697,10 +1708,10 @@ func _auto_play() -> void:
 		if _play_musical_sec >= start_sec:
 			var key: Panel = _note_key_map.get(note, null)
 			if key:
-				_demo_key_press(key)
+				_demo_key_press(key, ev[4])
 			_demo_played_flag[i] = true
 
-func _demo_key_press(key: Panel) -> void:
+func _demo_key_press(key: Panel, dur_sec: float) -> void:
 	var note: String = _key_note_map.get(key, "")
 	if note == "":
 		return
@@ -1711,9 +1722,13 @@ func _demo_key_press(key: Panel) -> void:
 	add_child(player)
 	_auto_players.append(player)
 	player.play()
-	# 键色高亮由 _process 的蓝色闪现负责；此处仅延时释放播放器
+	# 键色高亮由 _process 的蓝色闪现负责；此处按音符时值振铃后淡出，避免持续音色（如小号）
+	# 在相邻音符间满音量重叠堆积成连续杂音。
+	var sustain: float = clampf(dur_sec, 0.08, 3.0)   # 音高持续时长（秒），钳制极端值
+	var release: float = min(0.25, sustain * 0.5)     # 淡出时长，越短越干净
 	var tw := create_tween()
-	tw.tween_interval(1.2)
+	tw.tween_interval(sustain)
+	tw.tween_property(player, "volume_db", -80.0, release)
 	tw.tween_callback(func():
 		if is_instance_valid(player):
 			player.stop()
