@@ -102,7 +102,8 @@ const LEAD_TIME: float = 2.5   # 横杠从顶到底基础引导时间(秒)
 const BAR_SPEED_MULT: float = 1.4   # 独立下落速度倍速（>1 加快下落；节奏不变）
 const HIT_SNAP: float = 0.05   # 同拍判定时间窗(秒)
 const MIDI_DIR: String = "user://midi"       # 用户可写乐谱目录
-const MIDI_DIR_BUNDLED: String = "res://midi" # 打包内置乐谱（首次运行拷贝到 user://midi）
+const MIDI_DIR_BUNDLED: String = "res://midi" # 打包内置乐谱（首次运行适配后写入 user://midi）
+const MIDI_BUNDLED_MARKER: String = MIDI_DIR + "/.bundled_v1.txt" # 内置曲已适配标记（适配算法升级时递增版本号以重新适配）
 const MAX_NAME_LEN: int = 40   # 曲名最大展示字符数，超长从后往前保留末尾
 # MIDI 音符号 -> 17 音琴键（本项目 MIDI 由工具生成，范围 C4-E6）
 const MIDI_C4: int = 60
@@ -1263,23 +1264,63 @@ func _solid_style(c: Color) -> StyleBoxFlat:
 	s.bg_color = c
 	return s
 
-## 确保 user://midi 存在，并把打包内置 MIDI 拷贝进去（首次运行/有新增时）
+## 确保 user://midi 存在；内置乐谱经「适配」后写入用户目录（首次/新增/算法升级时处理一次）
+## 适配版直接覆盖同名文件（含旧版安装遗留的原始拷贝）；用户导入的 *_适配.mid 不受影响
 func _ensure_midi_dir() -> void:
 	DirAccess.make_dir_recursive_absolute(MIDI_DIR)
 	var bundled := DirAccess.open(MIDI_DIR_BUNDLED)
 	if bundled == null:
 		return
+	# marker：已适配过的内置文件名清单，避免每次启动重复写盘
+	var done := {}
+	var mf := FileAccess.open(MIDI_BUNDLED_MARKER, FileAccess.READ)
+	if mf:
+		for line in mf.get_as_text().split("\n", false):
+			done[line.strip_edges()] = true
+		mf.close()
+	var need_save := false
 	bundled.list_dir_begin()
 	var fname := bundled.get_next()
 	while fname != "":
-		if not bundled.current_is_dir() and fname.to_lower().ends_with(".mid"):
-			var src := MIDI_DIR_BUNDLED + "/" + fname
-			var dst := MIDI_DIR + "/" + fname
-			# 仅在 user 目录没有时才拷贝，不覆盖用户自己放的乐谱
-			if not FileAccess.file_exists(dst):
-				DirAccess.copy_absolute(src, dst)
+		if not bundled.current_is_dir() and fname.to_lower().ends_with(".mid") and not done.has(fname):
+			if _bundle_adapt_one(fname):
+				done[fname] = true
+				need_save = true
 		fname = bundled.get_next()
 	bundled.list_dir_end()
+	if need_save:
+		var w := FileAccess.open(MIDI_BUNDLED_MARKER, FileAccess.WRITE)
+		if w:
+			for k in done.keys():
+				w.store_line(k)
+			w.close()
+
+## 内置单曲适配：res://midi/<fname> 解析→适配→写为 user://midi/<同名>。
+## 成功返回 true；解析/适配失败时退回旧的原样拷贝，不让单文件失败拖垮列表。
+func _bundle_adapt_one(fname: String) -> bool:
+	var src := MIDI_DIR_BUNDLED + "/" + fname
+	var dst := MIDI_DIR + "/" + fname
+	var events: Array = MidiParser.parse_file(src)
+	if events.is_empty():
+		print("[bundle] 解析为空，退回原样拷贝: %s" % fname)
+		return DirAccess.copy_absolute(src, dst) == OK
+	var adapted_dict: Dictionary = MidiAdapter.adapt(events, true)
+	var adapted: Array = adapted_dict["events"]
+	if adapted.is_empty():
+		print("[bundle] 适配为空，退回原样拷贝: %s" % fname)
+		return DirAccess.copy_absolute(src, dst) == OK
+	var bpm: float = MidiParser.read_tempo(src)
+	if bpm <= 0.0:
+		bpm = 100.0   # 与导入流程一致的兜底拍速
+	var title: String = MidiParser.read_title(src)
+	if title.is_empty():
+		title = fname.get_basename()
+	var ok: bool = MidiWriter.write_file(dst, adapted, bpm, title)
+	if not ok:
+		print("[bundle] 写入失败: %s" % dst)
+	else:
+		print("[bundle] 已适配内置曲目: %s (%d音)" % [fname, adapted.size()])
+	return ok
 
 ## 扫描用户乐谱目录下的 .mid 文件，列出乐谱
 func _build_score_list() -> void:
@@ -1467,6 +1508,7 @@ func _start_by_path(name: String, path: String, mode: String) -> void:
 	var midi_notes: Array = MidiParser.parse_file(path)
 	if midi_notes.is_empty():
 		print("乐谱解析为空: " + path)
+		_show_toast("乐谱解析失败，无法开始\n曲名: %s" % name)
 		return
 	_current_midi = midi_notes.duplicate()
 	_close_sidebar()
